@@ -52,14 +52,21 @@ pipeline {
 
         stage('Run Flask App') {
             steps {
-                echo '=== Running Flask app ==='
-                powershell """
-                & .\\venv\\Scripts\\Activate.ps1
-                $env:FLASK_APP = '${FLASK_APP}'
-                $env:FLASK_ENV = '${FLASK_ENV}'
-                Start-Process python -ArgumentList '-m flask run --host=0.0.0.0 --port=5000'
-                Start-Sleep -Seconds 5
-                Write-Output 'Flask app started successfully!'
+                echo '=== Starting Flask app (background) ==='
+                bat """
+                REM Kill any previous Flask instances
+                for /f "tokens=5" %%a in ('netstat -ano ^| findstr :5000') do taskkill /F /PID %%a >nul 2>&1
+
+                call %VENV_DIR%\\Scripts\\activate
+                set FLASK_APP=%FLASK_APP%
+                set FLASK_ENV=%FLASK_ENV%
+
+                REM Start Flask app in background
+                start "" python -m flask run --host=0.0.0.0 --port=5000
+
+                timeout /t 5 >nul
+                echo Flask app started successfully.
+                exit /b 0
                 """
             }
         }
