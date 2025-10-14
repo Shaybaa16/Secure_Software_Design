@@ -26,43 +26,43 @@ pipeline {
             }
         }
 
-        // stage('Install Requirements') {
-        //     steps {
-        //         echo '=== Installing dependencies from requirements.txt ==='
-        //         bat """
-        //         call %VENV_DIR%\\Scripts\\activate
-        //         pip install -r requirements.txt
-        //         """
-        //     }
-        // }
+        stage('Install Requirements') {
+            steps {
+                echo '=== Installing dependencies from requirements.txt ==='
+                bat """
+                call %VENV_DIR%\\Scripts\\activate
+                pip install -r requirements.txt
+                """
+            }
+        }
 
-        // stage('Test') {
-        //     steps {
-        //         echo '=== Running tests (if any) ==='
-        //         bat """
-        //         call %VENV_DIR%\\Scripts\\activate
-        //         if exist tests (
-        //             pytest --maxfail=1 --disable-warnings -q
-        //         ) else (
-        //             echo No tests directory found — skipping tests.
-        //         )
-        //         """
-        //     }
-        // }
+        stage('Test') {
+            steps {
+                echo '=== Running tests (if any) ==='
+                bat """
+                call %VENV_DIR%\\Scripts\\activate
+                if exist tests (
+                    pytest --maxfail=1 --disable-warnings -q
+                ) else (
+                    echo No tests directory found — skipping tests.
+                )
+                """
+            }
+        }
 
-        // stage('Run Flask App') {
-        //     steps {
-        //         echo '=== Running Flask app ==='
-        //         bat """
-        //         call %VENV_DIR%\\Scripts\\activate
-        //         set FLASK_APP=%FLASK_APP%
-        //         set FLASK_ENV=%FLASK_ENV%
-        //         start /B flask run --host=0.0.0.0 --port=5000
-        //         timeout /t 5
-        //         echo Flask app started successfully!
-        //         """
-        //     }
-        // }
+        stage('Run Flask App') {
+            steps {
+                echo '=== Running Flask app ==='
+                bat """
+                call %VENV_DIR%\\Scripts\\activate
+                set FLASK_APP=%FLASK_APP%
+                set FLASK_ENV=%FLASK_ENV%
+                start /B flask run --host=0.0.0.0 --port=5000
+                timeout /t 5
+                echo Flask app started successfully!
+                """
+            }
+        }
     }
 
     post {
