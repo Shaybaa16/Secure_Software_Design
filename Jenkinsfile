@@ -53,9 +53,13 @@ pipeline {
         stage('Run Flask App') {
             steps {
                 echo '=== Running Flask app ==='
-                bat """
-                python app.py
-                echo Flask app started successfully!
+                powershell """
+                & .\\venv\\Scripts\\Activate.ps1
+                $env:FLASK_APP = '${FLASK_APP}'
+                $env:FLASK_ENV = '${FLASK_ENV}'
+                Start-Process python -ArgumentList '-m flask run --host=0.0.0.0 --port=5000'
+                Start-Sleep -Seconds 5
+                Write-Output 'Flask app started successfully!'
                 """
             }
         }
