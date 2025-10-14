@@ -57,12 +57,13 @@ pipeline {
                 call %VENV_DIR%\\Scripts\\activate
                 set FLASK_APP=%FLASK_APP%
                 set FLASK_ENV=%FLASK_ENV%
-                start /B flask run --host=0.0.0.0 --port=5000
-                timeout /t 5
+                start /B python -m flask run --host=0.0.0.0 --port=5000
+                timeout /t 5 >nul
                 echo Flask app started successfully!
                 """
             }
         }
+
     }
 
     post {
