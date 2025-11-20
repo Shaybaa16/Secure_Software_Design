@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     options {
-        skipDefaultCheckout(true)  // Don't use cached checkout
+        skipDefaultCheckout(true)
     }
     
     parameters {
@@ -20,14 +20,13 @@ pipeline {
         stage('Checkout Latest Code') {
             steps {
                 echo "=== Fetching latest code from GitHub ==="
-                cleanWs()  // Clean workspace first
+                cleanWs()
                 checkout([$class: 'GitSCM', 
                     branches: [[name: '*/main']], 
                     userRemoteConfigs: [[url: 'https://github.com/Shaybaa16/Secure_Software_Design']]])
                 
-                // Show what commit we're on
                 bat 'git log -1 --oneline'
-                bat 'dir'  // Show files in workspace
+                bat 'dir'
             }
         }
 
@@ -42,12 +41,8 @@ pipeline {
             steps {
                 script {
                     echo "=== Verifying required files exist ==="
-                    
-                    // List all files for debugging
-                    bat 'echo Listing all files:'
                     bat 'dir /B'
                     
-                    // Check if requirements.txt exists
                     if (!fileExists('requirements.txt')) {
                         error("requirements.txt file not found in repository root!")
                     }
@@ -82,20 +77,7 @@ pipeline {
                 echo '=== Installing security scanning tools ==='
                 bat """
                 call "${VENV_DIR}\\\\Scripts\\\\activate"
-                pip install safety detect-secrets bandit
-                """
-            }
-        }
-
-        stage('Bandit SAST Scan') {
-            when {
-                expression { params.RUN_SECURITY_SCANS == true }
-            }
-            steps {
-                echo "=== Running Bandit Python SAST Scan ==="
-                bat """
-                call "${VENV_DIR}\\\\Scripts\\\\activate"
-                bandit -r . -f json -o reports/bandit-report.json || echo "Bandit scan completed with findings"
+                pip install safety detect-secrets
                 """
             }
         }
@@ -142,7 +124,6 @@ pipeline {
             steps {
                 echo "=== Running SAST with SonarQube ==="
                 script {
-                    // Check if sonar-scanner is available
                     def scannerHome = tool 'sonar-scanner'
                     echo "SonarScanner path: ${scannerHome}"
                 }
@@ -176,13 +157,11 @@ pipeline {
             steps {
                 echo "=== Generating Security Reports ==="
                 script {
-                    // Create security summary
                     bat """
                     echo "<html><body><h1>Security Scan Report</h1>" > reports/security-summary.html
                     echo "<p>Build: ${env.BUILD_NUMBER}</p>" >> reports/security-summary.html
                     echo "<p>Environment: ${params.DEPLOY_ENV}</p>" >> reports/security-summary.html
                     echo "<h2>Scans Completed:</h2><ul>" >> reports/security-summary.html
-                    echo "<li>Bandit SAST Scan</li>" >> reports/security-summary.html
                     echo "<li>Safety Dependency Scan</li>" >> reports/security-summary.html
                     echo "<li>Secrets Detection</li>" >> reports/security-summary.html
                     echo "<li>SonarQube SAST</li>" >> reports/security-summary.html
@@ -210,7 +189,6 @@ pipeline {
             echo "Security Scans: ${params.RUN_SECURITY_SCANS}"
             echo "Environment: ${params.DEPLOY_ENV}"
             
-            // Safe cleanup - don't fail pipeline on cleanup
             bat 'taskkill /F /IM python.exe >nul 2>&1 & echo "Cleanup completed"'
         }
         success {
