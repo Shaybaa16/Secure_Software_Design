@@ -21,6 +21,18 @@ pipeline {
             }
         }
 
+        stage('Verify Files') {
+            steps {
+                script {
+                    // Check if requirements.txt exists
+                    if (!fileExists('requirements.txt')) {
+                        error("requirements.txt file not found in repository root!")
+                    }
+                    echo "✅ requirements.txt found"
+                }
+            }
+        }
+
         stage('Setup Environment') {
             steps {
                 echo "=== Setting up Python environment ==="
@@ -38,28 +50,30 @@ pipeline {
                 bat """
                 call "${VENV_DIR}\\\\Scripts\\\\activate"
                 pip install -r requirements.txt
-                pip install pytest safety detect-secrets
                 """
             }
         }
 
-        stage('SAST - SonarQube Scan') {
+        stage('Install Security Tools') {
+            steps {
+                echo '=== Installing security scanning tools ==='
+                bat """
+                call "${VENV_DIR}\\\\Scripts\\\\activate"
+                pip install safety detect-secrets bandit
+                """
+            }
+        }
+
+        stage('Bandit SAST Scan') {
             when {
                 expression { params.RUN_SECURITY_SCANS == true }
             }
             steps {
-                echo "=== Running SAST with SonarQube ==="
-                withSonarQubeEnv('sonarqube') {
-                    bat """
-                    call "${VENV_DIR}\\\\Scripts\\\\activate"
-                    sonar-scanner ^
-                      -Dsonar.projectKey=flask-app-${params.VERSION} ^
-                      -Dsonar.projectName="Flask App ${params.VERSION}" ^
-                      -Dsonar.sources=. ^
-                      -Dsonar.host.url=http://localhost:9000 ^
-                      -Dsonar.python.version=3
-                    """
-                }
+                echo "=== Running Bandit Python SAST Scan ==="
+                bat """
+                call "${VENV_DIR}\\\\Scripts\\\\activate"
+                bandit -r . -f json -o reports/bandit-report.json || echo "Bandit scan completed with findings"
+                """
             }
         }
 
@@ -75,11 +89,11 @@ pipeline {
                 pip list --format=json > reports/dependencies.json
                 """
                 
-                // Simple Python dependency check
                 script {
                     if (fileExists('reports/safety-report.json')) {
                         def safetyReport = readJSON file: 'reports/safety-report.json'
-                        echo "Safety scan found ${safetyReport.vulnerabilities?.size() ?: 0} vulnerabilities"
+                        def vulnCount = safetyReport.vulnerabilities?.size() ?: 0
+                        echo "Safety scan found ${vulnCount} vulnerabilities"
                     }
                 }
             }
@@ -95,6 +109,31 @@ pipeline {
                 call "${VENV_DIR}\\\\Scripts\\\\activate"
                 detect-secrets scan --all-files > reports/secrets-scan.json || echo "Secrets scan completed"
                 """
+            }
+        }
+
+        stage('SAST - SonarQube Scan') {
+            when {
+                expression { params.RUN_SECURITY_SCANS == true }
+            }
+            steps {
+                echo "=== Running SAST with SonarQube ==="
+                script {
+                    // Check if sonar-scanner is available
+                    def scannerHome = tool 'sonar-scanner'
+                    echo "SonarScanner path: ${scannerHome}"
+                }
+                withSonarQubeEnv('sonarqube') {
+                    bat """
+                    call "${VENV_DIR}\\\\Scripts\\\\activate"
+                    sonar-scanner ^
+                      -Dsonar.projectKey=flask-app-${params.VERSION} ^
+                      -Dsonar.projectName="Flask App ${params.VERSION}" ^
+                      -Dsonar.sources=. ^
+                      -Dsonar.host.url=http://localhost:9000 ^
+                      -Dsonar.python.version=3
+                    """
+                }
             }
         }
 
@@ -114,17 +153,28 @@ pipeline {
             steps {
                 echo "=== Generating Security Reports ==="
                 script {
-                    // Publish any generated reports
+                    // Create security summary
+                    bat """
+                    echo "<html><body><h1>Security Scan Report</h1>" > reports/security-summary.html
+                    echo "<p>Build: ${env.BUILD_NUMBER}</p>" >> reports/security-summary.html
+                    echo "<p>Environment: ${params.DEPLOY_ENV}</p>" >> reports/security-summary.html
+                    echo "<h2>Scans Completed:</h2><ul>" >> reports/security-summary.html
+                    echo "<li>Bandit SAST Scan</li>" >> reports/security-summary.html
+                    echo "<li>Safety Dependency Scan</li>" >> reports/security-summary.html
+                    echo "<li>Secrets Detection</li>" >> reports/security-summary.html
+                    echo "<li>SonarQube SAST</li>" >> reports/security-summary.html
+                    echo "</ul></body></html>" >> reports/security-summary.html
+                    """
+                    
                     publishHTML([
                         allowMissing: true,
                         alwaysLinkToLastBuild: true,
                         keepAll: true,
                         reportDir: 'reports',
-                        reportFiles: '*.html',
-                        reportName: 'Security Reports'
+                        reportFiles: 'security-summary.html',
+                        reportName: 'Security Scan Summary'
                     ])
                     
-                    // Archive all security reports
                     archiveArtifacts artifacts: 'reports/**/*', allowEmptyArchive: true
                 }
             }
@@ -137,8 +187,8 @@ pipeline {
             echo "Security Scans: ${params.RUN_SECURITY_SCANS}"
             echo "Environment: ${params.DEPLOY_ENV}"
             
-            // Cleanup
-            bat 'taskkill /F /IM python.exe >nul 2>&1 || echo "No Python processes to kill"'
+            // Safe cleanup - don't fail pipeline on cleanup
+            bat 'taskkill /F /IM python.exe >nul 2>&1 & echo "Cleanup completed"'
         }
         success {
             echo '✅ Pipeline succeeded!'
