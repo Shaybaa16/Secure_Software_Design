@@ -123,20 +123,21 @@ pipeline {
             }
             steps {
                 echo "=== Running SAST with SonarQube ==="
-                script {
-                    def scannerHome = tool 'sonar-scanner'
-                    echo "SonarScanner path: ${scannerHome}"
-                }
                 withSonarQubeEnv('sonarqube') {
-                    bat """
-                    call "${VENV_DIR}\\\\Scripts\\\\activate"
-                    sonar-scanner ^
-                      -Dsonar.projectKey=flask-app-${params.VERSION} ^
-                      -Dsonar.projectName="Flask App ${params.VERSION}" ^
-                      -Dsonar.sources=. ^
-                      -Dsonar.host.url=http://localhost:9000 ^
-                      -Dsonar.python.version=3
-                    """
+                    script {
+                        def scannerHome = tool 'sonar-scanner'
+                        bat """
+                        set PATH=${scannerHome}\\bin;%PATH%
+                        call "${VENV_DIR}\\\\Scripts\\\\activate"
+                        sonar-scanner.bat ^
+                          -Dsonar.projectKey=flask-app-${params.VERSION} ^
+                          -Dsonar.projectName="Flask App ${params.VERSION}" ^
+                          -Dsonar.sources=. ^
+                          -Dsonar.exclusions=**/venv/**,**/reports/**,**/instance/** ^
+                          -Dsonar.host.url=http://localhost:9000 ^
+                          -Dsonar.python.version=3
+                        """
+                    }
                 }
             }
         }
