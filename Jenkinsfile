@@ -9,6 +9,7 @@ pipeline {
     
     environment {
         VENV_DIR = 'venv'
+        SCAN_HOME = "${WORKSPACE}"
     }
 
     stages {
@@ -20,19 +21,15 @@ pipeline {
             }
         }
 
-        stage('Display Files') {
+        stage('Verify Files') {
             steps {
-                echo "=== Checking repository contents ==="
-                bat """
-                echo "Files in repository:"
-                dir
-                echo "--- requirements.txt content ---"
-                if exist requirements.txt (
-                    type requirements.txt
-                ) else (
-                    echo "requirements.txt not found - this is OK, we'll install directly"
-                )
-                """
+                script {
+                    // Check if requirements.txt exists
+                    if (!fileExists('requirements.txt')) {
+                        error("requirements.txt file not found in repository root!")
+                    }
+                    echo "✅ requirements.txt found"
+                }
             }
         }
 
@@ -49,14 +46,20 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
-                echo '=== Installing security tools and dependencies ==='
+                echo '=== Installing dependencies ==='
                 bat """
                 call "${VENV_DIR}\\\\Scripts\\\\activate"
-                echo "Installing security scanning tools..."
+                pip install -r requirements.txt
+                """
+            }
+        }
+
+        stage('Install Security Tools') {
+            steps {
+                echo '=== Installing security scanning tools ==='
+                bat """
+                call "${VENV_DIR}\\\\Scripts\\\\activate"
                 pip install safety detect-secrets bandit
-                echo "Installing Flask and dependencies..."
-                pip install Flask Flask-SQLAlchemy SQLAlchemy
-                echo "✅ All dependencies installed successfully"
                 """
             }
         }
@@ -69,7 +72,7 @@ pipeline {
                 echo "=== Running Bandit Python SAST Scan ==="
                 bat """
                 call "${VENV_DIR}\\\\Scripts\\\\activate"
-                bandit -r . -f json -o reports/bandit-report.json || echo "Bandit scan completed"
+                bandit -r . -f json -o reports/bandit-report.json || echo "Bandit scan completed with findings"
                 """
             }
         }
@@ -79,11 +82,20 @@ pipeline {
                 expression { params.RUN_SECURITY_SCANS == true }
             }
             steps {
-                echo "=== Scanning dependencies with Safety ==="
+                echo "=== Scanning Python dependencies for vulnerabilities ==="
                 bat """
                 call "${VENV_DIR}\\\\Scripts\\\\activate"
                 safety check --json > reports/safety-report.json || echo "Safety scan completed"
+                pip list --format=json > reports/dependencies.json
                 """
+                
+                script {
+                    if (fileExists('reports/safety-report.json')) {
+                        def safetyReport = readJSON file: 'reports/safety-report.json'
+                        def vulnCount = safetyReport.vulnerabilities?.size() ?: 0
+                        echo "Safety scan found ${vulnCount} vulnerabilities"
+                    }
+                }
             }
         }
 
@@ -100,50 +112,69 @@ pipeline {
             }
         }
 
-        stage('Generate Security Report') {
+        stage('SAST - SonarQube Scan') {
+            when {
+                expression { params.RUN_SECURITY_SCANS == true }
+            }
+            steps {
+                echo "=== Running SAST with SonarQube ==="
+                script {
+                    // Check if sonar-scanner is available
+                    def scannerHome = tool 'sonar-scanner'
+                    echo "SonarScanner path: ${scannerHome}"
+                }
+                withSonarQubeEnv('sonarqube') {
+                    bat """
+                    call "${VENV_DIR}\\\\Scripts\\\\activate"
+                    sonar-scanner ^
+                      -Dsonar.projectKey=flask-app-${params.VERSION} ^
+                      -Dsonar.projectName="Flask App ${params.VERSION}" ^
+                      -Dsonar.sources=. ^
+                      -Dsonar.host.url=http://localhost:9000 ^
+                      -Dsonar.python.version=3
+                    """
+                }
+            }
+        }
+
+        stage('Code Quality Gate') {
+            when {
+                expression { params.RUN_SECURITY_SCANS == true }
+            }
+            steps {
+                echo "=== Waiting for SonarQube Quality Gate ==="
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false
+                }
+            }
+        }
+
+        stage('Security Report') {
             steps {
                 echo "=== Generating Security Reports ==="
                 script {
+                    // Create security summary
                     bat """
-                    echo "<html><body style='font-family: Arial, sans-serif; margin: 20px;'>" > reports/security-summary.html
-                    echo "<h1 style='color: #2c3e50;'>🔒 Security Scan Report</h1>" >> reports/security-summary.html
-                    echo "<div style='background: #f8f9fa; padding: 15px; border-radius: 5px;'>" >> reports/security-summary.html
-                    echo "<h2 style='color: #34495e;'>Build Information</h2>" >> reports/security-summary.html
-                    echo "<p><strong>Build Number:</strong> ${env.BUILD_NUMBER}</p>" >> reports/security-summary.html
-                    echo "<p><strong>Environment:</strong> ${params.DEPLOY_ENV}</p>" >> reports/security-summary.html
-                    echo "<p><strong>Version:</strong> ${params.VERSION}</p>" >> reports/security-summary.html
-                    echo "<p><strong>Security Scans:</strong> ${params.RUN_SECURITY_SCANS}</p>" >> reports/security-summary.html
-                    echo "</div>" >> reports/security-summary.html
-                    
-                    echo "<h2 style='color: #34495e;'>Security Scans Performed</h2>" >> reports/security-summary.html
-                    echo "<ul>" >> reports/security-summary.html
-                    echo "<li>✅ Bandit - Static Application Security Testing (SAST)</li>" >> reports/security-summary.html
-                    echo "<li>✅ Safety - Dependency Vulnerability Scanning</li>" >> reports/security-summary.html
-                    echo "<li>✅ Detect-secrets - Secrets & Credentials Detection</li>" >> reports/security-summary.html
-                    echo "</ul>" >> reports/security-summary.html
-                    
-                    echo "<h2 style='color: #34495e;'>Next Steps</h2>" >> reports/security-summary.html
-                    echo "<p>Review the generated JSON reports for detailed findings:</p>" >> reports/security-summary.html
-                    echo "<ul>" >> reports/security-summary.html
-                    echo "<li>bandit-report.json - Code security issues</li>" >> reports/security-summary.html
-                    echo "<li>safety-report.json - Dependency vulnerabilities</li>" >> reports/security-summary.html
-                    echo "<li>secrets-scan.json - Hardcoded secrets</li>" >> reports/security-summary.html
-                    echo "</ul>" >> reports/security-summary.html
-                    echo "<p><em>Report generated automatically by Jenkins DevSecOps Pipeline</em></p>" >> reports/security-summary.html
-                    echo "</body></html>" >> reports/security-summary.html
+                    echo "<html><body><h1>Security Scan Report</h1>" > reports/security-summary.html
+                    echo "<p>Build: ${env.BUILD_NUMBER}</p>" >> reports/security-summary.html
+                    echo "<p>Environment: ${params.DEPLOY_ENV}</p>" >> reports/security-summary.html
+                    echo "<h2>Scans Completed:</h2><ul>" >> reports/security-summary.html
+                    echo "<li>Bandit SAST Scan</li>" >> reports/security-summary.html
+                    echo "<li>Safety Dependency Scan</li>" >> reports/security-summary.html
+                    echo "<li>Secrets Detection</li>" >> reports/security-summary.html
+                    echo "<li>SonarQube SAST</li>" >> reports/security-summary.html
+                    echo "</ul></body></html>" >> reports/security-summary.html
                     """
                     
-                    // Publish the report
                     publishHTML([
-                        allowMissing: false,
+                        allowMissing: true,
                         alwaysLinkToLastBuild: true,
                         keepAll: true,
                         reportDir: 'reports',
                         reportFiles: 'security-summary.html',
-                        reportName: 'Security Scan Report'
+                        reportName: 'Security Scan Summary'
                     ])
                     
-                    // Archive all reports
                     archiveArtifacts artifacts: 'reports/**/*', allowEmptyArchive: true
                 }
             }
@@ -152,23 +183,18 @@ pipeline {
 
     post {
         always {
-            echo "=== Pipeline Execution Complete ==="
-            echo "Build: ${env.BUILD_NUMBER}"
-            echo "Environment: ${params.DEPLOY_ENV}" 
-            echo "Version: ${params.VERSION}"
+            echo "=== Pipeline completed ==="
             echo "Security Scans: ${params.RUN_SECURITY_SCANS}"
+            echo "Environment: ${params.DEPLOY_ENV}"
             
-            // Safe cleanup
-            bat 'taskkill /F /IM python.exe >nul 2>&1 || echo "Cleanup completed"'
+            // Safe cleanup - don't fail pipeline on cleanup
+            bat 'taskkill /F /IM python.exe >nul 2>&1 & echo "Cleanup completed"'
         }
         success {
-            echo '✅ 🎉 Pipeline succeeded!'
-            echo '📊 Security scans completed successfully.'
-            echo '🔍 Check the "Security Scan Report" for details.'
+            echo '✅ Pipeline succeeded!'
         }
         failure {
             echo '❌ Pipeline failed!'
-            echo '💡 Check the console output above for error details.'
         }
     }
 }
